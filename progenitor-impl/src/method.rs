@@ -135,6 +135,7 @@ impl OperationParameterKind {
 #[derive(Debug, PartialEq, Eq)]
 pub enum BodyContentType {
     OctetStream,
+    ProtoBuf,
     Json,
     FormUrlencoded,
     Text(String),
@@ -147,6 +148,7 @@ impl FromStr for BodyContentType {
         let offset = s.find(';').unwrap_or(s.len());
         match &s[..offset] {
             "application/octet-stream" => Ok(Self::OctetStream),
+            "application/x-protobuf" => Ok(Self::ProtoBuf),
             "application/json" => Ok(Self::Json),
             "application/x-www-form-urlencoded" => Ok(Self::FormUrlencoded),
             "text/plain" | "text/x-markdown" => {
@@ -164,6 +166,7 @@ impl std::fmt::Display for BodyContentType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::OctetStream => "application/octet-stream",
+            Self::ProtoBuf => "application/x-protobuf",
             Self::Json => "application/json",
             Self::FormUrlencoded => "application/x-www-form-urlencoded",
             Self::Text(typ) => typ,
@@ -623,6 +626,11 @@ impl Generator {
                                 quote! { B }
                             }
                             OperationParameterKind::Body(
+                                BodyContentType::ProtoBuf,
+                            ) => {
+                                quote! { B }
+                            }
+                            OperationParameterKind::Body(
                                 BodyContentType::Text(_),
                             ) => {
                                 quote! { String }
@@ -638,6 +646,7 @@ impl Generator {
             })
             .collect::<Vec<_>>();
 
+        // TODO: add support for ProtoBuf
         let raw_body_param = method.params.iter().any(|param| {
             param.typ == OperationParameterType::RawBody
                 && param.kind
@@ -955,6 +964,18 @@ impl Generator {
                     .header(
                         reqwest::header::CONTENT_TYPE,
                         reqwest::header::HeaderValue::from_static("application/octet-stream"),
+                    )
+                    .body(body)
+                }),
+                (
+                    OperationParameterKind::Body(BodyContentType::ProtoBuf),
+                    OperationParameterType::RawBody,
+                ) => Some(quote! {
+                    // Set the content type (this is handled by helper
+                    // functions for other MIME types).
+                    .header(
+                        reqwest::header::CONTENT_TYPE,
+                        reqwest::header::HeaderValue::from_static("application/x-protobuf"),
                     )
                     .body(body)
                 }),
@@ -1690,6 +1711,22 @@ impl Generator {
                                 }
                             })
                         },
+                        OperationParameterKind::Body(BodyContentType::ProtoBuf) => {
+                            let err_msg = format!(
+                                "conversion to `reqwest::Body` for {} failed",
+                                param.name,
+                            );
+
+                            Ok(quote! {
+                                pub fn #param_name<B>(mut self, value: B) -> Self
+                                    where B: std::convert::TryInto<reqwest::Body>
+                                {
+                                    self.#param_name = value.try_into()
+                                        .map_err(|_| #err_msg.to_string());
+                                    self
+                                }
+                            })
+                        },
                         OperationParameterKind::Body(BodyContentType::Text(_)) => {
                             let err_msg = format!(
                                 "conversion to `String` for {} failed",
@@ -2165,6 +2202,44 @@ impl Generator {
                     } if enumeration.is_empty() => Ok(()),
                     _ => Err(Error::UnexpectedFormat(format!(
                         "invalid schema for application/octet-stream: {:?}",
+                        schema
+                    ))),
+                }?;
+                OperationParameterType::RawBody
+            }
+            BodyContentType::ProtoBuf => {
+                // For an protobuf stream, we expect a simple, specific schema:
+                // "schema": {
+                //     "type": "string",
+                //     "format": "binary"
+                // }
+                match schema.item(components)? {
+                    openapiv3::Schema {
+                        schema_data:
+                            openapiv3::SchemaData {
+                                nullable: false,
+                                discriminator: None,
+                                default: None,
+                                // Other fields that describe or document the
+                                // schema are fine.
+                                ..
+                            },
+                        schema_kind:
+                            openapiv3::SchemaKind::Type(openapiv3::Type::String(
+                                openapiv3::StringType {
+                                    format:
+                                        openapiv3::VariantOrUnknownOrEmpty::Item(
+                                            openapiv3::StringFormat::Binary,
+                                        ),
+                                    pattern: None,
+                                    enumeration,
+                                    min_length: None,
+                                    max_length: None,
+                                },
+                            )),
+                    } if enumeration.is_empty() => Ok(()),
+                    _ => Err(Error::UnexpectedFormat(format!(
+                        "invalid schema for application/x-protobuf: {:?}",
                         schema
                     ))),
                 }?;

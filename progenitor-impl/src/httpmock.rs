@@ -180,6 +180,11 @@ impl Generator {
                             serde_json::Value
                         },
                         OperationParameterKind::Body(
+                            BodyContentType::ProtoBuf,
+                        ) => quote! {
+                            serde_json::Value
+                        },
+                        OperationParameterKind::Body(
                             BodyContentType::Text(_),
                         ) => quote! {
                             String
@@ -256,6 +261,9 @@ impl Generator {
                             OperationParameterType::RawBody => {
                                 match body_content_type {
                                     BodyContentType::OctetStream => quote! {
+                                        Self(self.0.json_body(value))
+                                    },
+                                    BodyContentType::ProtoBuf => quote! {
                                         Self(self.0.json_body(value))
                                     },
                                     BodyContentType::Text(_) => quote! {
