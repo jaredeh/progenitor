@@ -139,6 +139,7 @@ pub enum BodyContentType {
     Json,
     FormUrlencoded,
     Text(String),
+    MultipartFormData,
 }
 
 impl FromStr for BodyContentType {
@@ -149,6 +150,7 @@ impl FromStr for BodyContentType {
         match &s[..offset] {
             "application/octet-stream" => Ok(Self::OctetStream),
             "application/x-protobuf" => Ok(Self::ProtoBuf),
+            "multipart/form-data" => Ok(Self::MultipartFormData),
             "application/json" => Ok(Self::Json),
             "application/x-www-form-urlencoded" => Ok(Self::FormUrlencoded),
             "text/plain" | "text/x-markdown" => {
@@ -167,6 +169,7 @@ impl std::fmt::Display for BodyContentType {
         f.write_str(match self {
             Self::OctetStream => "application/octet-stream",
             Self::ProtoBuf => "application/x-protobuf",
+            Self::MultipartFormData => "multipart/form-data",
             Self::Json => "application/json",
             Self::FormUrlencoded => "application/x-www-form-urlencoded",
             Self::Text(typ) => typ,
@@ -977,6 +980,14 @@ impl Generator {
                         reqwest::header::HeaderValue::from_static("application/x-protobuf"),
                     )
                     .body(body)
+                }),
+                (
+                    OperationParameterKind::Body(BodyContentType::MultipartFormData),
+                    OperationParameterType::Type(_),
+                ) => Some(quote! {
+                    // Convert the body into a multipart form
+                    let form = progenitor_client::serialize_multipart_form(&body)?;
+                    .multipart(form)
                 }),
                 (
                     OperationParameterKind::Body(BodyContentType::Text(mime_type)),
@@ -2243,6 +2254,34 @@ impl Generator {
                     ))),
                 }?;
                 OperationParameterType::RawBody
+            }
+            BodyContentType::MultipartFormData => {
+                // For multipart/form-data, we expect an object schema with properties
+                match schema.item(components)? {
+                    openapiv3::Schema {
+                        schema_kind: openapiv3::SchemaKind::Type(openapiv3::Type::Object(_)),
+                        ..
+                    } => {
+                        // Create a type for the form data
+                        let name = sanitize(
+                            &format!(
+                                "{}-body",
+                                operation.operation_id.as_ref().unwrap(),
+                            ),
+                            Case::Pascal,
+                        );
+                        let typ = self
+                            .type_space
+                            .add_type_with_name(&schema.to_schema(), Some(name))?;
+                        OperationParameterType::Type(typ)
+                    }
+                    _ => {
+                        return Err(Error::UnexpectedFormat(format!(
+                            "invalid schema for multipart/form-data: {:?}",
+                            schema
+                        )));
+                    }
+                }
             }
             BodyContentType::Text(_) => {
                 // For a plain text body, we expect a simple, specific schema:
