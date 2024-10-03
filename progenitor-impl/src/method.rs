@@ -646,13 +646,12 @@ impl Generator {
             })
             .collect::<Vec<_>>();
 
-        // TODO: add support for ProtoBuf
         let raw_body_param = method.params.iter().any(|param| {
             param.typ == OperationParameterType::RawBody
-                && param.kind
-                    == OperationParameterKind::Body(
-                        BodyContentType::OctetStream,
-                    )
+                && matches!(param.kind,
+                    OperationParameterKind::Body(BodyContentType::OctetStream)
+                    | OperationParameterKind::Body(BodyContentType::ProtoBuf)
+                )
         });
 
         let bounds = if raw_body_param {

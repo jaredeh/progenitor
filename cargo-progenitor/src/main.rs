@@ -48,7 +48,7 @@ struct Args {
     registry_name: Option<String>,
     /// Target crate license
     #[clap(long, default_value = "SPECIFY A LICENSE BEFORE PUBLISHING")]
-    license_name: String,
+    licensename: String,
 
     /// SDK interface style
     #[clap(value_enum, long, default_value_t = InterfaceArg::Positional)]
@@ -159,7 +159,7 @@ fn main() -> Result<()> {
                 version = \"{}\"\n\
                 edition = \"2021\"\n\
                 license = \"{}\"\n",
-                name, version, &args.license_name,
+                name, version, &args.licensename,
             );
             if let Some(registry_name) = args.registry_name {
                 tomlout.extend(
