@@ -136,10 +136,10 @@ impl OperationParameterKind {
 pub enum BodyContentType {
     OctetStream,
     ProtoBuf,
+    MultipartFormData,
     Json,
     FormUrlencoded,
     Text(String),
-    MultipartFormData,
 }
 
 impl FromStr for BodyContentType {
@@ -634,6 +634,11 @@ impl Generator {
                                 quote! { B }
                             }
                             OperationParameterKind::Body(
+                                BodyContentType::MultipartFormData,
+                            ) => {
+                                quote! { B }
+                            }
+                            OperationParameterKind::Body(
                                 BodyContentType::Text(_),
                             ) => {
                                 quote! { String }
@@ -919,6 +924,58 @@ impl Generator {
             (headers_build, headers_use)
         };
 
+        // use std::fmt::Debug;
+        // // Generate code for multipart forms
+        // let multipart_form = method
+        // .params
+        // .iter()
+        // .filter_map(|param| match &param.kind {
+        //     OperationParameterKind::Body(BodyContentType::MultipartFormData) => {
+        //         match &param.typ {
+        //             OperationParameterType::Type(type_id) => {
+        //                 let ty = self.type_space.get_type(type_id).ok()?;
+        //                 match ty.builder() {
+        //                     Some(a) => {
+        //                         println!("a: {:?}", a.clone());
+        //                         let _ = a.clone()
+        //                         .into_iter()
+        //                         .filter(|c| {
+        //                             println!("c: {}", c);
+        //                             true
+        //                         });
+        //                         let res = quote! {
+        //                             let #a;
+        //                         };
+        //                         Some(res)
+        //                     },
+        //                     None => None,
+        //                 }
+        //             },
+        //            &OperationParameterType::RawBody => todo!()
+        //         }
+        //     }
+        //     _ => None,
+        // })
+        // .collect::<Vec<_>>();
+
+        // Generate code for multipart forms
+        let multipart_form = method
+            .params
+            .iter()
+            .filter_map(|param| match &param.kind {
+                OperationParameterKind::Body(BodyContentType::MultipartFormData) => Some(true),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        let multipart_form_build = if multipart_form.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                let form = body.into_multipart();
+            }
+        };
+
         let websock_hdrs = if method.dropshot_websocket {
             quote! {
                 .header(reqwest::header::CONNECTION, "Upgrade")
@@ -986,8 +1043,11 @@ impl Generator {
                     OperationParameterType::Type(_),
                 ) => Some(quote! {
                     // Convert the body into a multipart form
-                    let form = progenitor_client::serialize_multipart_form(&body)?;
-                    .multipart(form)
+                    .header(
+                        reqwest::header::CONTENT_TYPE,
+                        reqwest::header::HeaderValue::from_static("multipart/form-data"),
+                    )
+                    .multipart(form?)
                 }),
                 (
                     OperationParameterKind::Body(BodyContentType::Text(mime_type)),
@@ -1186,6 +1246,7 @@ impl Generator {
             #query_build
 
             #headers_build
+            #multipart_form_build
 
             #[allow(unused_mut)]
             let mut #request_ident = #client.client
@@ -1527,7 +1588,8 @@ impl Generator {
             .map(|param| match &param.typ {
                 OperationParameterType::Type(type_id) => {
                     let ty = self.type_space.get_type(type_id)?;
-
+                    println!("name: {}", ty.name());
+                    //let ty2 = ty.type_entry();
                     // For body parameters only, if there's a builder we'll
                     // nest that within this builder.
                     if let (
@@ -1722,6 +1784,22 @@ impl Generator {
                             })
                         },
                         OperationParameterKind::Body(BodyContentType::ProtoBuf) => {
+                            let err_msg = format!(
+                                "conversion to `reqwest::Body` for {} failed",
+                                param.name,
+                            );
+
+                            Ok(quote! {
+                                pub fn #param_name<B>(mut self, value: B) -> Self
+                                    where B: std::convert::TryInto<reqwest::Body>
+                                {
+                                    self.#param_name = value.try_into()
+                                        .map_err(|_| #err_msg.to_string());
+                                    self
+                                }
+                            })
+                        },
+                        OperationParameterKind::Body(BodyContentType::MultipartFormData) => {
                             let err_msg = format!(
                                 "conversion to `reqwest::Body` for {} failed",
                                 param.name,

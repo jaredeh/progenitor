@@ -7,11 +7,11 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use openapiv3::OpenAPI;
-use proc_macro2::TokenStream;
+use proc_macro2::{TokenStream, TokenTree};
 use quote::quote;
 use serde::Deserialize;
 use thiserror::Error;
-use typify::{TypeSpace, TypeSpaceSettings};
+use typify::{TypeSpace, TypeSpaceSettings, TypeId};
 
 use crate::to_schema::ToSchema;
 
@@ -244,12 +244,24 @@ impl Default for Generator {
     }
 }
 
+
+use schemars::schema::{InstanceType, SchemaObject};
+
 impl Generator {
     /// Create a new generator with default values.
     pub fn new(settings: &GenerationSettings) -> Self {
         let mut type_settings = TypeSpaceSettings::default();
         type_settings
             .with_type_mod("types")
+            .with_conversion(
+                SchemaObject {
+                    instance_type: Some(InstanceType::String.into()),
+                    format: Some("binary".to_string()),
+                    ..Default::default()
+                },
+                "Vec<u8>",
+                [TypeImpl::Display].into_iter(),
+            )
             .with_struct_builder(settings.interface == InterfaceStyle::Builder);
         settings.extra_derives.iter().for_each(|derive| {
             let _ = type_settings.with_derive(derive.clone());
@@ -268,7 +280,9 @@ impl Generator {
         );
 
         // Adjust generation by type, name, or schema.
+        println!("About to patch");
         settings.patch.iter().for_each(|(type_name, patch)| {
+            println!("patch: {type_name} -> {patch:?}");
             type_settings.with_patch(type_name, patch);
         });
         settings.replace.iter().for_each(
@@ -332,6 +346,179 @@ impl Generator {
                 )
             })
             .collect::<Result<Vec<_>>>()?;
+
+        let encodings = spec
+            .paths
+            .iter()
+            .flat_map(|(_, ref_or_item)| ref_or_item.as_item())
+            .flat_map(|item| item.iter())
+            .filter_map(|(operation_id, operation)| operation.request_body.as_ref())
+            .flat_map(|request_body| request_body.as_item())
+            .filter_map(|body| body.content.get("multipart/form-data"))
+            .flat_map(|content| {
+                // println!("content:\n {:?}\n\n", content);
+                // println!("encoding:\n {:?}\n\n", content.encoding);
+                content.encoding.iter().filter_map(|(name, encoding)| {
+                    if let Some(ctype) = &encoding.content_type {
+                        Some((name.to_string(), ctype.as_str()))
+                        // match ctype.as_str() {
+                        //     "application/x-protobuf" | "application/octet-stream" => {
+                        //         // binary types
+                        //         Some((name.to_string(), true))
+                        //     }
+                        //     _ => Some((name.to_string(), false)),
+                        // }
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+
+        println!("aaa: {:?}\n", encodings);
+
+
+        // use std::fmt::Debug;
+        // // Generate code for multipart forms
+        // let multipart_form = method
+        // .params
+        // .iter()
+        // .filter_map(|param| match &param.kind {
+        //     OperationParameterKind::Body(BodyContentType::MultipartFormData) => {
+        //         match &param.typ {
+        //             OperationParameterType::Type(type_id) => {
+        //                 let ty = self.type_space.get_type(type_id).ok()?;
+        //                 match ty.builder() {
+        //                     Some(a) => {
+        //                         println!("a: {:?}", a.clone());
+        //                         let _ = a.clone()
+        //                         .into_iter()
+        //                         .filter(|c| {
+        //                             println!("c: {}", c);
+        //                             true
+        //                         });
+        //                         let res = quote! {
+        //                             let #a;
+        //                         };
+        //                         Some(res)
+        //                     },
+        //                     None => None,
+        //                 }
+        //             },
+        //            &OperationParameterType::RawBody => todo!()
+        //         }
+        //     }
+        //     _ => None,
+        // })
+        // .collect::<Vec<_>>();
+
+
+
+        // Get list of multipart form data parts
+        // let multipart_form_parts = spec
+        //     .paths
+        //     .iter()
+        //     .flat_map(|(_, path_item_ref)| path_item_ref.as_item())
+        //     .flat_map(|item| item.iter())  //.filter_map(|(_, operation)| operation.request_body.as_ref())
+        //     .filter_map(|(_, operation)|
+        //         match operation.request_body.as_ref() {
+        //             Some(request_body_item) => {
+        //                 match operation.operation_id.as_ref() {
+        //                     Some(operation_id) => {
+        //                         let operation_id_body = format!("{}Body", operation_id);
+        //                         let capitalized_operation_id_body = operation_id_body[..1].to_uppercase() + &operation_id_body[1..];
+        //                         Some((capitalized_operation_id_body, request_body_item))
+        //                     }
+        //                     None => None,
+        //                 }
+        //             },
+        //             None => None,
+        //         }
+        //     )
+        //     .filter_map(|(operation_id, request_body_item)|
+        //         match request_body_item.as_item() {
+        //             Some(request_body) => Some((operation_id, request_body)),
+        //             None => None,
+        //         }
+        //     )
+        //     .filter_map(|(operation_id, body)|
+        //         match body.content.get("multipart/form-data") {
+        //             Some(media_type) => Some((operation_id, media_type)),
+        //             None => None,
+        //         }
+        //     )
+        //     .filter_map(|(operation_id, media_type)|
+        //         match media_type.schema.as_ref(){
+        //             Some(schema_item) => Some((operation_id, schema_item)),
+        //             None => None,
+        //         }
+        //     )
+        //     .flat_map(|(operation_id, schema_item)| 
+        //         match schema_item.as_item() {
+        //                 Some(schema) => Some((operation_id, schema)),
+        //                 None => None,
+        //             }
+        //     )
+        //     .flat_map(|(operation_id, schema)| 
+        //         match schema {
+        //             openapiv3::Schema {
+        //                 schema_kind: openapiv3::SchemaKind::Type(openapiv3::Type::Object(schema_kind)),
+        //                 ..
+        //             } => Some((operation_id.clone(), &schema_kind.properties)),
+        //             _ => None,
+        //         }
+        //     )
+        //     .flat_map(|(operation_id, properties)|
+        //         properties.iter().map(move |(name, property)| (operation_id.clone(), name, property))
+        //     )
+        //     .filter_map(|(operation_id, name, property)|
+        //         match property.as_item() {
+        //             Some(p) => Some((operation_id, name.to_string(), p.schema_kind.clone())),
+        //             _ => None,
+        //         }
+        //     )
+        //     .flat_map(|(operation_id, name, schema_kind)|
+        //         match schema_kind {
+        //             openapiv3::SchemaKind::Type(openapiv3::Type::String(string_schema)) => Some((operation_id, name, string_schema.clone())),
+        //             _ => None,
+        //         }
+        //     )
+        //     .filter_map(|(operation_id, name, string_schema)|
+        //         match string_schema.format {
+        //             openapiv3::VariantOrUnknownOrEmpty::Item(format) => Some((operation_id, name, Some(format.clone()))),
+        //             _ => Some((operation_id, name, None)),
+        //         }
+        //     )
+        //     .filter_map(|(operation_id, name, format)| {
+        //         match format {
+        //             Some(openapiv3::StringFormat::Binary) => Some((operation_id, name, true)),
+        //             _ => Some((operation_id, name, false)),
+        //         }
+        //     })
+        //     .collect::<Vec<_>>();
+
+        // for schema_property in multipart_form_parts {
+        //     println!("multipart_form part:\n{:?}\n", schema_property);
+        // }
+
+        let multipart_form = process_multipart_form(&spec);
+
+        // impl UploadProtobufsBody {
+        //     // Create a multipart form for reqwest
+        //     pub fn into_multipart(self) -> Result<reqwest::multipart::Form, reqwest::Error> {
+        //         let mut form = reqwest::multipart::Form::new();
+        //         let metadata = reqwest::multipart::Part::bytes(self.metadata.clone())
+        //             .file_name("metadata")
+        //             .mime_str("application/x-protobuf")?;
+        //         form = form.part("metadata", metadata);
+        //         let payload = reqwest::multipart::Part::bytes(self.payload.clone())
+        //             .file_name("payload")
+        //             .mime_str("application/octet-stream")?;
+        //         form = form.part("payload", payload);
+        //         Ok(form)
+        //     }
+        // }
 
         let operation_code = match (
             &self.settings.interface,
@@ -421,6 +608,8 @@ impl Generator {
             #[allow(clippy::all)]
             pub mod types {
                 #types
+
+                #multipart_form
             }
 
             #[derive(Clone, Debug)]
@@ -694,6 +883,212 @@ pub fn validate_openapi(spec: &OpenAPI) -> Result<()> {
     })?;
 
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct MultiPartParts {
+    /// The name of the part
+    name: String,
+    /// The content type of the part
+    content_type: String,
+    /// The binary of the part
+    binary: bool,
+}
+
+impl MultiPartParts {
+    fn new() -> Self {
+        Self {
+            name: "".to_string(),
+            content_type: "".to_string(),
+            binary: false,
+        }
+    }
+}
+
+// Process the OpenAPI document to generate the multpart form specific code
+fn process_multipart_form(spec: &OpenAPI) -> TokenStream {
+    let multipart_forms = spec
+        .paths
+        .iter()
+        .flat_map(|(_, path_item_ref)| path_item_ref.as_item())
+        .flat_map(|item| item.iter())  //.filter_map(|(_, operation)| operation.request_body.as_ref())
+        .filter_map(|(_, operation)|
+            match operation.request_body.as_ref() {
+                Some(request_body_item) => {
+                    match operation.operation_id.as_ref() {
+                        Some(operation_id) => {
+                            let operation_id_body = format!("{}Body", operation_id);
+                            let capitalized_operation_id_body = operation_id_body[..1].to_uppercase() + &operation_id_body[1..];
+                            Some((capitalized_operation_id_body, request_body_item))
+                        }
+                        None => None,
+                    }
+                },
+                None => None,
+            }
+        )
+        .filter_map(|(operation_id, request_body_item)|
+            match request_body_item.as_item() {
+                Some(request_body) => Some((operation_id, request_body)),
+                None => None,
+            }
+        )
+        .filter_map(|(operation_id, body)|
+            match body.content.get("multipart/form-data") {
+                Some(media_type) => Some((operation_id, media_type)),
+                None => None,
+            }
+        )
+        .collect::<Vec<_>>();
+
+        let mut multipart_form_parts = std::collections::HashMap::new();
+        for (operation_id, media_type) in &multipart_forms {
+            match media_type.schema.as_ref() {
+                None => continue,
+                Some(schema_item) => {
+                    match schema_item.as_item() {
+                        None => continue,
+                        Some(schema) => {
+                            match schema {
+                                openapiv3::Schema {
+                                    schema_kind: openapiv3::SchemaKind::Type(openapiv3::Type::Object(schema_kind)),
+                                    ..
+                                } => {
+                                    for (name, property) in schema_kind.properties.iter() {
+                                        multipart_form_parts
+                                            .entry(operation_id.clone())
+                                            .or_insert_with(HashMap::new)
+                                            .insert(name.to_string(), HashMap::new());
+                                        match property.as_item() {
+                                            None => {},
+                                            Some(property) => {
+                                                match &property.as_ref().schema_kind {
+                                                    openapiv3::SchemaKind::Type(openapiv3::Type::String(string_schema)) => {
+                                                        match string_schema.format {
+                                                            openapiv3::VariantOrUnknownOrEmpty::Item(format) => {
+                                                                match format {
+                                                                    openapiv3::StringFormat::Binary => {
+                                                                        multipart_form_parts
+                                                                            .entry(operation_id.clone())
+                                                                            .or_insert_with(HashMap::new)
+                                                                            .entry(name.to_string())
+                                                                            .or_insert_with(HashMap::new)
+                                                                            .insert("parttype","bytes".to_string());
+                                                                    },
+                                                                    _ => {
+                                                                        multipart_form_parts
+                                                                            .entry(operation_id.clone())
+                                                                            .or_insert_with(HashMap::new)
+                                                                            .entry(name.to_string())
+                                                                            .or_insert_with(HashMap::new)
+                                                                            .insert("parttype","text".to_string());
+                                                                    },
+                                                                }
+                                                            },
+                                                            _ => {},
+                                                        }
+                                                    },
+                                                    _ => {},
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {},
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        for (operation_id, media_type) in multipart_forms {
+            for (name, encoding) in media_type.encoding.iter() {
+                match &encoding.content_type {
+                    Some(content_type) => {
+                        multipart_form_parts
+                            .entry(operation_id.clone())
+                            .or_insert_with(HashMap::new)
+                            .entry(name.to_string())
+                            .or_insert_with(HashMap::new)
+                            .insert("content_type", content_type.to_string());
+                    },
+                    None => {},
+                }
+            }
+        }
+
+    // for (operation_id, properties) in multipart_forms {
+    //     let property_list = properties.iter()
+    //         .filter_map(move |(name, property)| 
+    //             match property.as_item() {
+    //                 Some(p) => Some((name.to_string(), p.schema_kind.clone())),
+    //                 _ => None,
+    //             }
+    //         )
+    //         .flat_map(|(name, schema_kind)|
+    //             match schema_kind {
+    //                 openapiv3::SchemaKind::Type(openapiv3::Type::String(string_schema)) => Some((name, string_schema.clone())),
+    //                 _ => None,
+    //             }
+    //         )
+    //         .filter_map(|(name, string_schema)|
+    //             match string_schema.format {
+    //                 openapiv3::VariantOrUnknownOrEmpty::Item(format) => Some((name, Some(format.clone()))),
+    //                 _ => Some((name, None)),
+    //             }
+    //         )
+    //         .filter_map(|(name, format)|
+    //             match format {
+    //                 Some(openapiv3::StringFormat::Binary) => Some((name, true)),
+    //                 _ => Some((name, false)),
+    //             }
+    //         )
+    //         .collect::<Vec<_>>();
+
+    //     multipart_form_parts.insert(operation_id, property_list);
+    // }
+    println!("multipart_form_parts:\n {:?}\n", multipart_form_parts);
+
+    let into_multipart_list = multipart_form_parts.iter()
+        .flat_map(move |(operation_id, property_list)| {
+            let parts = property_list.iter().map(move |(partname, properties)| {
+                // for (key, value) in properties.iter() {
+                //     println!("-partname: {:?}", partname.clone());
+                //     println!("-key: {:?}", key.clone());
+                //     println!("-value: {:?}", value.clone());
+                // }
+                let parttype: TokenStream = properties.get("parttype").unwrap().parse().unwrap();
+                let ppartname: TokenStream = partname.clone().parse().unwrap();
+
+                let content_type = properties.get("content_type").unwrap();
+                    quote! {
+                        let #ppartname = reqwest::multipart::Part::#parttype(self.#ppartname.clone())
+                            .mime_str(#content_type)?;
+                        form = form.part(#partname, #ppartname);
+                    }
+                })
+                .collect::<Vec<_>>();
+            let op_id: TokenStream = operation_id.clone().parse().unwrap();
+            quote! {
+            
+                impl #op_id {
+            
+                    pub fn into_multipart(self) -> Result<reqwest::multipart::Form, reqwest::Error> {
+                        let mut form = reqwest::multipart::Form::new();
+                        #(#parts)*
+                        Ok(form)
+                    }
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    
+
+    println!("into_multipart_list:\n {:?}\n", into_multipart_list);
+    return quote! {
+        #(#into_multipart_list)*
+    };
 }
 
 #[cfg(test)]
