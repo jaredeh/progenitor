@@ -657,8 +657,11 @@ impl Generator {
         let raw_body_param = method.params.iter().any(|param| {
             param.typ == OperationParameterType::RawBody
                 && matches!(param.kind,
-                    OperationParameterKind::Body(BodyContentType::OctetStream)
-                    | OperationParameterKind::Body(BodyContentType::ProtoBuf)
+                    OperationParameterKind::Body(
+                        BodyContentType::OctetStream
+                    ) | OperationParameterKind::Body(
+                        BodyContentType::ProtoBuf
+                    )
                 )
         });
 
@@ -924,40 +927,6 @@ impl Generator {
             (headers_build, headers_use)
         };
 
-        // use std::fmt::Debug;
-        // // Generate code for multipart forms
-        // let multipart_form = method
-        // .params
-        // .iter()
-        // .filter_map(|param| match &param.kind {
-        //     OperationParameterKind::Body(BodyContentType::MultipartFormData) => {
-        //         match &param.typ {
-        //             OperationParameterType::Type(type_id) => {
-        //                 let ty = self.type_space.get_type(type_id).ok()?;
-        //                 match ty.builder() {
-        //                     Some(a) => {
-        //                         println!("a: {:?}", a.clone());
-        //                         let _ = a.clone()
-        //                         .into_iter()
-        //                         .filter(|c| {
-        //                             println!("c: {}", c);
-        //                             true
-        //                         });
-        //                         let res = quote! {
-        //                             let #a;
-        //                         };
-        //                         Some(res)
-        //                     },
-        //                     None => None,
-        //                 }
-        //             },
-        //            &OperationParameterType::RawBody => todo!()
-        //         }
-        //     }
-        //     _ => None,
-        // })
-        // .collect::<Vec<_>>();
-
         // Generate code for multipart forms
         let multipart_form = method
             .params
@@ -1042,11 +1011,6 @@ impl Generator {
                     OperationParameterKind::Body(BodyContentType::MultipartFormData),
                     OperationParameterType::Type(_),
                 ) => Some(quote! {
-                    // Convert the body into a multipart form
-                    .header(
-                        reqwest::header::CONTENT_TYPE,
-                        reqwest::header::HeaderValue::from_static("multipart/form-data"),
-                    )
                     .multipart(form?)
                 }),
                 (
@@ -1588,8 +1552,7 @@ impl Generator {
             .map(|param| match &param.typ {
                 OperationParameterType::Type(type_id) => {
                     let ty = self.type_space.get_type(type_id)?;
-                    println!("name: {}", ty.name());
-                    //let ty2 = ty.type_entry();
+
                     // For body parameters only, if there's a builder we'll
                     // nest that within this builder.
                     if let (

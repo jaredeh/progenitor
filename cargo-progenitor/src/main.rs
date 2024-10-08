@@ -92,8 +92,6 @@ impl From<TagArg> for TagStyle {
 }
 
 fn reformat_code(input: String) -> String {
-    //println!("Reformatting code");
-    //println!("{}", input);
     let config = rustfmt_wrapper::config::Config {
         normalize_doc_attributes: Some(true),
         wrap_comments: Some(true),
@@ -139,8 +137,7 @@ fn main() -> Result<()> {
             println!("-----------------------------------------------------");
             for (idx, type_entry) in type_space.iter_types().enumerate() {
                 let n = type_entry.describe();
-                let name = type_entry.name().to_string();
-                println!("{:>4}  {}  {}", idx, n, name);
+                println!("{:>4}  {}", idx, n);
             }
             println!("-----------------------------------------------------");
             println!();
